@@ -324,10 +324,187 @@ python manage.py runserver
 
 3. Create a booking via the API and then call `initiate_payment` for that booking. Use the returned `checkout_url` to complete a sandbox payment, then call `verify_payment` to update the status and trigger a confirmation email.
 
+## Celery & Background Tasks Configuration
+
+This project uses Celery with RabbitMQ for handling background tasks, specifically sending booking confirmation emails asynchronously.
+
+### Quick Setup
+
+#### 1. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+#### 2. Install and Start RabbitMQ
+
+**Using Docker (Recommended):**
+```bash
+docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 \
+  -e RABBITMQ_DEFAULT_USER=guest \
+  -e RABBITMQ_DEFAULT_PASS=guest \
+  rabbitmq:3-management
+```
+
+**Using Package Manager (Linux):**
+```bash
+sudo apt-get install rabbitmq-server
+sudo systemctl start rabbitmq-server
+```
+
+#### 3. Configure Email in .env
+
+```env
+# Celery Configuration
+CELERY_BROKER_URL=amqp://guest:guest@localhost:5672//
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+
+# Email Configuration (example with Gmail)
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=true
+EMAIL_HOST_USER=your-email@gmail.com
+EMAIL_HOST_PASSWORD=your-app-password
+DEFAULT_FROM_EMAIL=noreply@alxtravelapp.com
+
+# Or use console backend for development
+# EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+```
+
+#### 4. Start Celery Worker
+
+In a new terminal window:
+
+```bash
+celery -A alx_travel_app worker -l info
+```
+
+#### 5. Run Django Development Server
+
+```bash
+python manage.py runserver
+```
+
+### Available Background Tasks
+
+#### send_booking_confirmation_email(booking_id)
+
+Sends a confirmation email when a new booking is created.
+
+- **Triggered by**: `BookingViewSet.perform_create()`
+- **Parameters**: booking_id (int)
+- **Retries**: Up to 3 times with 60-second intervals
+- **Features**: 
+  - HTML email template support with plain text fallback
+  - Guest name personalization
+  - Includes booking details (dates, price, listing info)
+
+#### send_payment_confirmation_email(booking_id)
+
+Sends a confirmation email when payment is successfully completed.
+
+- **Triggered by**: `BookingViewSet.verify_payment()` (when payment succeeds)
+- **Parameters**: booking_id (int)
+- **Retries**: Up to 3 times with 60-second intervals
+- **Features**:
+  - Confirms successful payment
+  - Includes payment amount
+  - Guest name personalization
+
+### Testing Tasks
+
+#### Via Django Shell
+
+```bash
+python manage.py shell
+```
+
+```python
+from listings.models import Booking
+from listings.tasks import send_booking_confirmation_email
+
+# Find a booking
+booking = Booking.objects.first()
+
+# Trigger the task asynchronously
+result = send_booking_confirmation_email.delay(booking.id)
+
+# Check task status
+print(result.state)      # PENDING, STARTED, SUCCESS, FAILURE
+print(result.result)     # True or False
+```
+
+#### Via API
+
+Create a new booking:
+```bash
+curl -X POST http://localhost:8000/api/listings/bookings/ \
+  -H "Authorization: Bearer <your-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "listing": 1,
+    "check_in": "2024-02-01",
+    "check_out": "2024-02-05",
+    "number_of_guests": 2
+  }'
+```
+
+Watch the Celery worker logs for task execution.
+
+### File Changes
+
+**New Files:**
+- `alx_travel_app/celery.py` - Celery configuration
+
+**Modified Files:**
+- `requirements.txt` - Added celery and kombu
+- `alx_travel_app/settings.py` - Added Celery, email, and result backend configurations
+- `alx_travel_app/__init__.py` - Initialize Celery app
+- `listings/tasks.py` - Enhanced with robust email tasks
+- `listings/views.py` - Added email task triggers in BookingViewSet
+
+### Troubleshooting
+
+**Tasks not executing?**
+1. Ensure Celery worker is running: `celery -A alx_travel_app worker -l info`
+2. Verify RabbitMQ is running and accessible
+3. Check .env configuration for CELERY_BROKER_URL
+
+**Emails not being sent?**
+1. Verify EMAIL_HOST and EMAIL_HOST_PASSWORD in .env
+2. For Gmail, use an app-specific password (not regular password)
+3. Test with console backend: `EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend`
+4. Check Celery worker logs for exceptions
+
+**RabbitMQ connection issues?**
+1. Verify RabbitMQ is running: `docker ps` (if using Docker)
+2. Test connection: `telnet localhost 5672`
+3. Check RabbitMQ logs for errors
+
+### Additional Monitoring
+
+Check active Celery tasks:
+```bash
+celery -A alx_travel_app inspect active
+```
+
+Monitor with Celery Flower (web UI):
+```bash
+pip install flower
+celery -A alx_travel_app flower
+# Access at http://localhost:5555
+```
+
+For more detailed information, see the comprehensive [Celery Setup Guide](CELERY_SETUP.md).
+
 Notes:
 
-- The project includes a Celery task skeleton at `listings/tasks.py` (`send_payment_confirmation_email`). To send emails in the background, configure and run a Celery worker.
-- The code attempts to fall back to synchronous email sending if Celery is not configured.
+- The project now uses Celery with RabbitMQ message broker for asynchronous task execution
+- Email tasks have retry logic and proper error handling
+- Tasks are auto-discovered from the listings app
+- For development, you can use the console email backend to see emails in the terminal
+
 ## License
 
 This project is part of ALX Software Engineering Program training.

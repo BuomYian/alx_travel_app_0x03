@@ -182,6 +182,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         """
         Set the current user as the guest when creating a new booking.
         Calculate total price based on number of nights and price per night.
+        Trigger booking confirmation email task.
         """
         listing = serializer.validated_data['listing']
         check_in = serializer.validated_data['check_in']
@@ -191,7 +192,16 @@ class BookingViewSet(viewsets.ModelViewSet):
         number_of_nights = (check_out - check_in).days
         total_price = float(listing.price_per_night) * number_of_nights
 
-        serializer.save(guest=self.request.user, total_price=total_price)
+        booking = serializer.save(
+            guest=self.request.user, total_price=total_price)
+
+        # Trigger email notification task asynchronously
+        try:
+            from .tasks import send_booking_confirmation_email
+            send_booking_confirmation_email.delay(booking.id)
+        except Exception as e:
+            # Log the error but don't fail the request if email task fails
+            print(f"Failed to trigger booking confirmation email: {str(e)}")
 
     @action(detail=True, methods=['post'])
     def initiate_payment(self, request, pk=None):
@@ -214,7 +224,8 @@ class BookingViewSet(viewsets.ModelViewSet):
         )
 
         # Build return/verify URL
-        verify_url = request.build_absolute_uri(f"/api/listings/bookings/{booking.id}/verify_payment/")
+        verify_url = request.build_absolute_uri(
+            f"/api/listings/bookings/{booking.id}/verify_payment/")
 
         # Prepare payload for Chapa
         tx_ref = f"booking_{booking.id}_{int(time.time())}"
@@ -236,7 +247,8 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         try:
             init_url = f"{settings.CHAPA_BASE_URL}/transaction/initialize"
-            resp = requests.post(init_url, json=payload, headers=headers, timeout=10)
+            resp = requests.post(init_url, json=payload,
+                                 headers=headers, timeout=10)
             data = resp.json()
         except Exception as e:
             payment.status = 'failed'
@@ -251,8 +263,10 @@ class BookingViewSet(viewsets.ModelViewSet):
         checkout_url = None
         if isinstance(data, dict):
             d = data.get('data') or {}
-            tx_id = d.get('id') or d.get('reference') or d.get('tx_ref') or tx_ref
-            checkout_url = d.get('checkout_url') or d.get('link') or d.get('checkoutUrl')
+            tx_id = d.get('id') or d.get(
+                'reference') or d.get('tx_ref') or tx_ref
+            checkout_url = d.get('checkout_url') or d.get(
+                'link') or d.get('checkoutUrl')
 
         payment.transaction_id = tx_id
         payment.save()
@@ -276,7 +290,8 @@ class BookingViewSet(viewsets.ModelViewSet):
             return Response({'error': 'No payment found for this booking'}, status=status.HTTP_404_NOT_FOUND)
 
         # Determine transaction id to verify
-        tx = payment.transaction_id or request.query_params.get('transaction_id')
+        tx = payment.transaction_id or request.query_params.get(
+            'transaction_id')
         if not tx:
             return Response({'error': 'No transaction id available to verify'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -295,7 +310,8 @@ class BookingViewSet(viewsets.ModelViewSet):
         if isinstance(data, dict):
             # Many gateways put status in data.status or top-level status
             d = data.get('data') or {}
-            gateway_status = d.get('status') or data.get('status') or d.get('transaction_status')
+            gateway_status = d.get('status') or data.get(
+                'status') or d.get('transaction_status')
             if gateway_status and str(gateway_status).lower() in ['success', 'completed', 'paid']:
                 status_str = 'completed'
             else:

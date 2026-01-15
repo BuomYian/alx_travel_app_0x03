@@ -161,3 +161,33 @@ CHAPA_SECRET_KEY = env('CHAPA_SECRET_KEY', default='')
 CHAPA_BASE_URL = env('CHAPA_BASE_URL', default='https://api.chapa.co/v1')
 # Optional site URL used to build return/verify links for payments
 SITE_URL = env('SITE_URL', default='http://localhost:8000')
+
+# Celery Configuration
+# Broker URL for RabbitMQ
+CELERY_BROKER_URL = env('CELERY_BROKER_URL',
+                        default='amqp://guest:guest@localhost:5672//')
+# Result backend for storing task results
+CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND',
+                            default='redis://localhost:6379/0')
+# Task serialization format
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+# Task execution settings
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
+# Task routing
+CELERY_TASK_ROUTES = {
+    'listings.tasks.*': {'queue': 'default'},
+}
+
+# Email Configuration
+EMAIL_BACKEND = env(
+    'EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = env('EMAIL_HOST', default='smtp.gmail.com')
+EMAIL_PORT = env.int('EMAIL_PORT', default=587)
+EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
+EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL',
+                         default='noreply@alxtravelapp.com')
